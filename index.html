@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Outlet performance</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --text: #1b1f27;
+    --muted: #5d6675;
+    --border: #dde1e8;
+    --accent: #2b6cb0;
+    --accent-text: #ffffff;
+    --good: #2b6cb0;
+    --bad: #c62828;
+    --line: #1b1f27;
+    --grid: #e6e9ef;
+    --warn-bg: #fdecec;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1218;
+      --card: #181d27;
+      --text: #e8ebf1;
+      --muted: #9aa4b5;
+      --border: #2b3342;
+      --accent: #6ea8e8;
+      --accent-text: #0f1218;
+      --good: #6ea8e8;
+      --bad: #ef6b6b;
+      --line: #e8ebf1;
+      --grid: #262d3b;
+      --warn-bg: #2a1a1d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.5rem; margin: 8px 0 2px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: .9rem; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  section { margin-bottom: 16px; }
+
+  #status { padding: 24px 16px; text-align: center; }
+  #status.error { border-color: var(--bad); }
+  #status p { margin: 0 0 8px; }
+  .spinner {
+    width: 28px; height: 28px; margin: 0 auto 12px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+  button {
+    font: inherit; color: var(--text); background: var(--card);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 8px 16px; min-height: 40px; cursor: pointer;
+  }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button[aria-pressed="true"] {
+    background: var(--accent); color: var(--accent-text); border-color: var(--accent);
+  }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .kpi .label { color: var(--muted); font-size: .85rem; }
+  .kpi .value { font-size: 1.7rem; font-weight: 650; margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .kpi .note { color: var(--muted); font-size: .8rem; margin-top: 2px; }
+  .kpi.bad .value { color: var(--bad); }
+  @media (max-width: 760px) { .kpis { grid-template-columns: repeat(2, 1fr); } .kpi .value { font-size: 1.4rem; } }
+
+  .chart-wrap { display: flex; align-items: flex-start; }
+  .yaxis { position: relative; flex: 0 0 44px; height: 240px; margin-top: 18px; }
+  .yaxis span {
+    position: absolute; right: 6px; transform: translateY(50%);
+    font-size: .72rem; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .scroll { flex: 1 1 auto; overflow-x: auto; padding-bottom: 6px; -webkit-overflow-scrolling: touch; }
+  .plot { position: relative; padding-top: 18px; }
+  .bars { position: relative; height: 240px; display: flex; align-items: flex-end; gap: 6px; border-bottom: 1px solid var(--border); }
+  .gridline { position: absolute; left: 0; right: 0; border-top: 1px solid var(--grid); pointer-events: none; }
+  .target-line {
+    position: absolute; left: 0; right: 0; border-top: 2px dashed var(--line);
+    pointer-events: none; z-index: 2;
+  }
+  .target-line span {
+    position: absolute; right: 0; top: -20px; font-size: .72rem;
+    background: var(--card); color: var(--text); padding: 0 4px;
+  }
+  .col { flex: 0 0 44px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; position: relative; z-index: 1; }
+  .bar { width: 100%; border-radius: 4px 4px 0 0; background: var(--good); min-height: 2px; }
+  .bar.low { background: var(--bad); }
+  .val { font-size: .68rem; font-variant-numeric: tabular-nums; margin-bottom: 2px; color: var(--text); }
+  .labels { display: flex; gap: 6px; padding-top: 6px; }
+  .labels div { flex: 0 0 44px; text-align: center; font-size: .68rem; color: var(--muted); line-height: 1.25; }
+  .labels b { display: block; color: var(--text); font-weight: 600; }
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; font-size: .8rem; color: var(--muted); margin-top: 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+  .legend .dash { width: 18px; height: 0; border-top: 2px dashed var(--line); border-radius: 0; vertical-align: 3px; }
+
+  ul.attention { list-style: none; margin: 0; padding: 0; }
+  ul.attention li {
+    display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    padding: 10px 12px; border: 1px solid var(--border); border-left: 4px solid var(--bad);
+    border-radius: 8px; margin-bottom: 8px; background: var(--warn-bg);
+  }
+  ul.attention .where { font-weight: 600; }
+  ul.attention .detail { color: var(--muted); font-size: .85rem; }
+  ul.attention .pct { font-weight: 700; color: var(--bad); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .empty { color: var(--muted); margin: 0; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Outlet performance</h1>
+  <p class="sub" id="source-note"></p>
+
+  <div id="status" class="card" role="status" aria-live="polite">
+    <div class="spinner" aria-hidden="true"></div>
+    <p>Loading sales data…</p>
+  </div>
+
+  <div id="app" hidden>
+    <section class="card" aria-label="Filter by outlet">
+      <h2>Outlet</h2>
+      <div class="filters" id="filters"></div>
+    </section>
+
+    <section class="kpis" aria-label="Key figures" id="kpis"></section>
+
+    <section class="card" aria-labelledby="chart-title">
+      <h2 id="chart-title">Sales as % of target, by outlet and week</h2>
+      <div class="chart-wrap">
+        <div class="yaxis" id="yaxis" aria-hidden="true"></div>
+        <div class="scroll" id="scroll" tabindex="0" role="img" aria-label="Bar chart of sales as a percentage of target for each outlet and week">
+          <div class="plot" id="plot"></div>
+        </div>
+      </div>
+      <div class="legend">
+        <span><i style="background:var(--good)"></i>90% of target or above</span>
+        <span><i style="background:var(--bad)"></i>Below 90%</span>
+        <span><i class="dash"></i>90% threshold</span>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="attn-title">
+      <h2 id="attn-title">Needs attention</h2>
+      <ul class="attention" id="attention"></ul>
+      <p class="empty" id="attention-empty" hidden>No outlet-weeks are below 90% of target for this selection.</p>
+    </section>
+  </div>
+</main>
+
+<script>
+/* ---------- Config ---------- */
+const CONFIG = {
+  // The sheet must be shared as "Anyone with the link can view".
+  SHEET_URL: "https://docs.google.com/spreadsheets/d/1-ce1mjituKJujqodq8hjt-c0-mfEAU1HvEAruaPX4aA/edit?usp=drive_link",
+  TAB_NAME: "Combined",
+  THRESHOLD: 0.9   // 90% of target
+};
+
+/* ---------- Helpers ---------- */
+const $ = (id) => document.getElementById(id);
+const nf = new Intl.NumberFormat("en-GB");
+const pf = (v, d = 1) => (v * 100).toFixed(d) + "%";
+
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") n.className = v;
+    else if (k === "text") n.textContent = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  kids.forEach((c) => n.append(c));
+  return n;
+}
+
+function sheetId(url) {
+  const m = String(url).match(/\/d\/([a-zA-Z0-9_-]+)/);
+  if (!m) throw new Error("The sheet link in CONFIG.SHEET_URL is not a valid Google Sheets link.");
+  return m[1];
+}
+
+const num = (s) => Number(String(s).replace(/[^0-9.\-]/g, ""));
+
+function fmtWeek(w) {
+  const m = String(w).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(w);
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+function fmtWeekLong(w) {
+  const m = String(w).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return String(w);
+  const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+}
+
+/* ---------- Data ---------- */
+// Loads the tab through Google's "gviz" endpoint using a <script> tag (JSONP).
+// A plain fetch() is blocked by the browser's CORS rules; a script tag is not.
+function fetchSheetTable(id, tab) {
+  return new Promise((resolve, reject) => {
+    const cb = "__gviz_cb_" + Date.now();
+    const script = document.createElement("script");
+    const cleanup = () => { delete window[cb]; script.remove(); clearTimeout(timer); };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Google Sheets did not respond. Check your connection and try again."));
+    }, 20000);
+    window[cb] = (resp) => { cleanup(); resolve(resp); };
+    script.onerror = () => {
+      cleanup();
+      reject(new Error("Could not read the sheet. Check the link, the tab name, and that the sheet is shared as “Anyone with the link can view”."));
+    };
+    script.src = "https://docs.google.com/spreadsheets/d/" + id + "/gviz/tq?headers=1&tqx=" +
+      encodeURIComponent("out:json;responseHandler:" + cb) + "&sheet=" + encodeURIComponent(tab);
+    document.head.append(script);
+  });
+}
+
+async function loadData() {
+  const id = sheetId(CONFIG.SHEET_URL);
+  const resp = await fetchSheetTable(id, CONFIG.TAB_NAME);
+  if (!resp || resp.status !== "ok" || !resp.table) {
+    const msg = resp && resp.errors && resp.errors[0] ? (resp.errors[0].detailed_message || resp.errors[0].message) : "";
+    throw new Error("Google Sheets could not return the “" + CONFIG.TAB_NAME + "” tab. " + msg);
+  }
+  const cell = (c) => (c == null ? "" : (c.v != null ? c.v : (c.f != null ? c.f : "")));
+  let header = resp.table.cols.map((c) => String(c.label || "").trim().toLowerCase());
+  let body = resp.table.rows.map((r) => (r.c || []).map(cell));
+  if (!header.includes("outlet") && body.length) {           // header row came back as data
+    header = body[0].map((h) => String(h).trim().toLowerCase());
+    body = body.slice(1);
+  }
+  if (!body.length) throw new Error("The “" + CONFIG.TAB_NAME + "” tab has no data rows.");
+  const need = ["outlet", "week", "sales", "target", "orders", "returns"];
+  const idx = {};
+  for (const n of need) {
+    idx[n] = header.indexOf(n);
+    if (idx[n] < 0) throw new Error("Column “" + n + "” was not found in the “" + CONFIG.TAB_NAME + "” tab.");
+  }
+  const data = body.map((r) => ({
+    outlet: String(r[idx.outlet] ?? "").trim(),
+    week: String(r[idx.week] ?? "").trim(),
+    sales: num(r[idx.sales]),
+    target: num(r[idx.target]),
+    orders: num(r[idx.orders]),
+    returns: num(r[idx.returns])
+  })).filter((d) => d.outlet && d.target > 0 && Number.isFinite(d.sales));
+  if (!data.length) throw new Error("No usable rows were found. Each row needs an outlet, a week and a target above zero.");
+  data.forEach((d) => { d.pct = d.sales / d.target; });
+  const order = [...new Set(data.map((d) => d.outlet))];
+  data.sort((a, b) => order.indexOf(a.outlet) - order.indexOf(b.outlet) || a.week.localeCompare(b.week));
+  return data;
+}
+
+/* ---------- Rendering ---------- */
+let ALL = [];
+let selected = "All";
+
+function render() {
+  const rows = selected === "All" ? ALL : ALL.filter((d) => d.outlet === selected);
+  renderFilters();
+  renderKpis(rows);
+  renderChart(rows);
+  renderAttention(rows);
+}
+
+function renderFilters() {
+  const box = $("filters");
+  box.replaceChildren();
+  ["All", ...new Set(ALL.map((d) => d.outlet))].forEach((name) => {
+    box.append(el("button", {
+      type: "button",
+      text: name,
+      "aria-pressed": String(name === selected),
+      onclick: () => { selected = name; render(); }
+    }));
+  });
+}
+
+function renderKpis(rows) {
+  const sum = (k) => rows.reduce((a, d) => a + d[k], 0);
+  const sales = sum("sales"), target = sum("target"), orders = sum("orders"), returns = sum("returns");
+  const pct = target ? sales / target : 0;
+  const rpct = orders ? returns / orders : 0;
+  const cards = [
+    ["Total sales", nf.format(sales), "Target " + nf.format(target), ""],
+    ["% of target", pf(pct), pct < CONFIG.THRESHOLD ? "Below 90%" : "Sales ÷ target", pct < CONFIG.THRESHOLD ? "bad" : ""],
+    ["Orders", nf.format(orders), rows.length + " outlet-weeks", ""],
+    ["Returns %", pf(rpct), nf.format(returns) + " returns ÷ orders", ""]
+  ];
+  const box = $("kpis");
+  box.replaceChildren(...cards.map(([l, v, n, cls]) =>
+    el("div", { class: "card kpi " + cls },
+      el("div", { class: "label", text: l }),
+      el("div", { class: "value", text: v }),
+      el("div", { class: "note", text: n }))));
+}
+
+function renderChart(rows) {
+  const maxPct = Math.max(1.2, ...rows.map((d) => d.pct));
+  const top = Math.ceil(maxPct * 10) / 10;          // axis max, e.g. 1.2
+  const H = 240;
+  const y = (p) => (p / top) * H;                     // value -> px from baseline
+
+  // Y axis
+  const ticks = [];
+  for (let t = 0; t <= top + 1e-9; t += 0.2) ticks.push(t);
+  $("yaxis").replaceChildren(...ticks.map((t) =>
+    el("span", { text: Math.round(t * 100) + "%", style: "bottom:" + y(t) + "px" })));
+
+  const width = rows.length * 50 + 6;
+  const plot = $("plot");
+  plot.style.minWidth = width + "px";
+
+  const bars = el("div", { class: "bars" });
+  ticks.filter((t) => t > 0).forEach((t) =>
+    bars.append(el("div", { class: "gridline", style: "bottom:" + y(t) + "px" })));
+  bars.append(el("div", { class: "target-line", style: "bottom:" + y(CONFIG.THRESHOLD) + "px" },
+    el("span", { text: "90%" })));
+
+  rows.forEach((d) => {
+    const low = d.pct < CONFIG.THRESHOLD;
+    bars.append(el("div", {
+      class: "col",
+      title: d.outlet + ", week of " + fmtWeekLong(d.week) + ": " + pf(d.pct) +
+        " of target (" + nf.format(d.sales) + " of " + nf.format(d.target) + ")"
+    },
+      el("div", { class: "val", text: Math.round(d.pct * 100) + "%" }),
+      el("div", { class: "bar" + (low ? " low" : ""), style: "height:" + y(d.pct) + "px" })));
+  });
+
+  const labels = el("div", { class: "labels" });
+  rows.forEach((d) => labels.append(el("div", {},
+    el("b", { text: d.outlet }), fmtWeek(d.week))));
+
+  plot.replaceChildren(bars, labels);
+}
+
+function renderAttention(rows) {
+  const low = rows.filter((d) => d.pct < CONFIG.THRESHOLD).sort((a, b) => a.pct - b.pct);
+  const list = $("attention");
+  list.replaceChildren(...low.map((d) =>
+    el("li", {},
+      el("div", {},
+        el("div", { class: "where", text: d.outlet + ", week of " + fmtWeekLong(d.week) }),
+        el("div", { class: "detail", text: nf.format(d.sales) + " against a target of " + nf.format(d.target) +
+          " (" + nf.format(d.target - d.sales) + " short)" })),
+      el("div", { class: "pct", text: pf(d.pct) }))));
+  $("attention-empty").hidden = low.length > 0;
+}
+
+/* ---------- Boot ---------- */
+function showError(err) {
+  const s = $("status");
+  s.className = "card error";
+  s.hidden = false;
+  $("app").hidden = true;
+  s.replaceChildren(
+    el("p", { text: "Could not load the sales data." }),
+    el("p", { class: "sub", text: err && err.message ? err.message : String(err) }),
+    el("button", { type: "button", text: "Try again", onclick: boot }));
+}
+
+async function boot() {
+  const s = $("status");
+  s.className = "card";
+  s.hidden = false;
+  $("app").hidden = true;
+  s.replaceChildren(el("div", { class: "spinner", "aria-hidden": "true" }), el("p", { text: "Loading sales data…" }));
+  try {
+    ALL = await loadData();
+    selected = "All";
+    s.hidden = true;
+    $("app").hidden = false;
+    $("source-note").textContent = "Source: Google Sheet, “" + CONFIG.TAB_NAME + "” tab. " +
+      ALL.length + " outlet-weeks, " + fmtWeekLong(ALL.map((d) => d.week).sort()[0]) + " to " +
+      fmtWeekLong(ALL.map((d) => d.week).sort().slice(-1)[0]) + ".";
+    render();
+  } catch (err) {
+    showError(err);
+  }
+}
+boot();
+</script>
+</body>
+</html>
